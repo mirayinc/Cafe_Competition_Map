@@ -142,6 +142,27 @@ def fetch_pois(place: str = PLACE_NAME) -> gpd.GeoDataFrame:
     return pois[existing].copy()
 
 
+def collect_cafes(boundary_path: Path | None = None) -> Path:
+    """Download only cafés using the committed Çankaya boundary.
+
+    This avoids downloading unrelated POIs and both street graphs just to
+    populate the competition map.
+    """
+    path = boundary_path or RAW_DIR / "cankaya_boundary.geojson"
+    boundary = gpd.read_file(path).to_crs(WGS84_CRS)
+    polygon = boundary.geometry.union_all()
+    cafes = ox.features_from_polygon(polygon, tags={"amenity": "cafe"})
+    cafes = cafes.to_crs(METRIC_CRS)
+    cafes = cafes.loc[cafes.geometry.notna() & ~cafes.geometry.is_empty].copy()
+    if cafes.empty:
+        raise RuntimeError("Çankaya sınırları içinde OSM kafe kaydı bulunamadı")
+    cafes["geometry"] = cafes.geometry.representative_point()
+    cafes = cafes[[column for column in ["name", "geometry"] if column in cafes.columns]]
+    output = RAW_DIR / LAYER_FILES["cafes"]
+    save_geojson(cafes.reset_index(drop=True), output)
+    return output
+
+
 def flatten_tag_columns(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """OSMnx sometimes stores tags as lists; flatten for GeoJSON/Parquet."""
     out = gdf.copy()

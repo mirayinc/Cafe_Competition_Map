@@ -78,7 +78,7 @@ def points_to_records(gdf: gpd.GeoDataFrame, category: str) -> list[dict]:
     return records
 
 
-def scatter_layer(records: list[dict], name: str) -> pdk.Layer:
+def scatter_layer(records: list[dict], name: str, pickable: bool = True) -> pdk.Layer:
     return pdk.Layer(
         "ScatterplotLayer",
         data=records,
@@ -88,7 +88,7 @@ def scatter_layer(records: list[dict], name: str) -> pdk.Layer:
         get_radius="radius",
         radius_min_pixels=2,
         radius_max_pixels=14,
-        pickable=True,
+        pickable=pickable,
     )
 
 
@@ -210,6 +210,7 @@ def grid_deck(
     value_col: str,
     invert: bool = False,
     selected_cell_id: int | None = None,
+    cafes: gpd.GeoDataFrame | None = None,
 ) -> pdk.Deck:
     frame = grid.copy()
     if frame.crs is None:
@@ -330,6 +331,13 @@ def grid_deck(
                     pickable=False,
                 )
             )
+
+    if cafes is not None and not cafes.empty:
+        records = points_to_records(cafes, "cafe")
+        if records:
+            # Circles remain visible over the coloured grid; the café tooltip
+            # is separate from the cell's suitability/competition tooltip.
+            layers.append(scatter_layer(records, "cafe-points", pickable=False))
 
     extra_metric = (
         "<br/><b>Seçili Metrik:</b> {tooltip}"
