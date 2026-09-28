@@ -16,7 +16,7 @@ importlib.reload(src.scoring)
 importlib.reload(src.cafe_similarity)
 
 from src.attach_streets import attach_street_names
-from src.collect_osm_data import LAYER_FILES, RAW_DIR, run as collect_osm
+from src.collect_osm_data import LAYER_FILES, RAW_DIR, collect_cafes, run as collect_osm
 from src.scoring import (
     DEFAULT_WEIGHTS,
     PILLAR_LABELS,
@@ -285,9 +285,12 @@ with st.sidebar:
 
     map_mode = st.radio(
         "Harita",
-        ["Uygunluk puanı", "Kafe rekabeti (25 kare)", "OSM noktaları", "Ham grid özelliği"],
+        ["Birleşik kafe haritası", "Uygunluk puanı", "Kafe rekabeti (25 kare)",
+         "OSM noktaları", "Ham grid özelliği"],
         index=0,
     )
+    if map_mode == "Birleşik kafe haritası":
+        combined_color = st.radio("Kare rengi", ["Uygunluk", "Rekabet"], horizontal=True)
 
     st.subheader("Puan ağırlıkları")
     st.caption("Varsayılan prior; kaydırınca 100’e oranlanır. Kârlılıktan öğrenilmedi.")
@@ -385,6 +388,16 @@ Mahalle toplam nüfus: `data/raw/tuik/cankaya_mahalle_nufus.csv`
             _sensitivity.clear()
         st.rerun()
 
+    if st.button("Yalnızca kafeleri indir / yenile"):
+        try:
+            with st.spinner("Çankaya kafeleri OSM'den alınıyor…"):
+                collect_cafes(BOUNDARY_PATH)
+                _read_file.clear()
+                _competition_counts.clear()
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Kafe verisi indirilemedi: {exc}")
+
     grid_metric = "suitability_score"
     if map_mode == "Ham grid özelliği":
         GRID_METRIC_LABELS = {
@@ -435,6 +448,7 @@ if show_inter:
     visible.add("road_intersection")
 
 has_osm = BOUNDARY_PATH.exists() and POIS_PATH.exists()
+cafe_path = RAW_DIR / LAYER_FILES["cafes"]
 grid_path = _feature_grid_path()
 
 if map_mode == "OSM noktaları" and not has_osm:
@@ -450,7 +464,10 @@ if has_osm:
     m4.metric("Metro / istasyon", len(layers["metro"]))
 else:
     layers = {}
-    st.info("OSM nokta katmanları yok; uygunluk haritası işlenmiş grid ile açılır.")
+    if cafe_path.exists():
+        layers["cafe"] = _read_file(str(cafe_path))
+    else:
+        st.info("Kafe noktaları henüz yok. Sol menüden ‘Yalnızca kafeleri indir / yenile’ seçin.")
 
 if map_mode == "OSM noktaları":
     with st.spinner("OSM noktaları ve harita hazırlanıyor…"):
@@ -477,17 +494,19 @@ else:
 
     competition_cols = ["cafes_cell", "cafes_9_cells", "cafes_25_cells", "competition_level",
                         "covered_cells_9", "covered_cells_25"]
-    if not set(competition_cols).issubset(scored_all.columns):
-        cafe_path = RAW_DIR / LAYER_FILES["cafes"]
-        if cafe_path.exists():
-            counts = _competition_counts(str(grid_path), grid_path.stat().st_mtime,
-                                         str(cafe_path), cafe_path.stat().st_mtime)
-            scored_all = scored_all.drop(columns=competition_cols, errors="ignore").merge(counts, on="cell_id")
+    if cafe_path.exists():
+        counts = _competition_counts(str(grid_path), grid_path.stat().st_mtime,
+                                     str(cafe_path), cafe_path.stat().st_mtime)
+        scored_all = scored_all.drop(columns=competition_cols, errors="ignore").merge(counts, on="cell_id")
     competition_available = set(competition_cols).issubset(scored_all.columns)
     if map_mode == "Kafe rekabeti (25 kare)" and not competition_available:
         st.warning("Kafe koordinatları bu depoda yok. Kenar çubuğundaki ‘OSM verisini indir / yenile’ "
                    "düğmesiyle veriyi alıp yeniden açın; 500 m toplamlarından 25 kare sayısı türetilemez.")
         st.stop()
+    if map_mode == "Birleşik kafe haritası" and not competition_available:
+        st.warning("Kafe koordinatları henüz yok. Sol menüden ‘Yalnızca kafeleri indir / yenile’ "
+                   "düğmesine basın; rekabet sayıları koordinatlar olmadan hesaplanamaz. "
+                   "Şimdilik uygunluk kareleri gösteriliyor.")
     if map_mode == "Ham grid özelliği" and grid_metric in competition_cols and not competition_available:
         st.warning("Bu sayılar için önce OSM kafe koordinatlarını indirin.")
         st.stop()
@@ -553,15 +572,26 @@ else:
         selected_id = int(ranked.iloc[0]["cell_id"])
         st.session_state.selected_cell_id = selected_id
 
-    color_col = ("competition_level" if map_mode == "Kafe rekabeti (25 kare)" else
-                 "suitability_score" if map_mode == "Uygunluk puanı" else grid_metric)
+    if map_mode == "Kafe rekabeti (25 kare)" or (
+        map_mode == "Birleşik kafe haritası" and combined_color == "Rekabet" and competition_available
+    ):
+        color_col = "competition_level"
+    elif map_mode == "Ham grid özelliği":
+        color_col = grid_metric
+    else:
+        color_col = "suitability_score"
     invert = color_col == "metro_distance"
     with st.spinner("Uygunluk haritası hazırlanıyor…"):
         st.pydeck_chart(
-            grid_deck(scored, color_col, invert=invert, selected_cell_id=selected_id),
+            grid_deck(scored, color_col, invert=invert, selected_cell_id=selected_id,
+                      cafes=layers.get("cafe") if map_mode == "Birleşik kafe haritası" else None),
             width="stretch",
         )
-    if map_mode == "Kafe rekabeti (25 kare)":
+    if map_mode == "Birleşik kafe haritası":
+        st.caption("Kırmızı noktalar OSM'deki kafeler. Kare rengi uygunluk veya rekabeti gösterir; "
+                   "karenin üzerine gelince iki sonuç birlikte görünür. "
+                   "Kafe kümelenmesi başarı ya da kârlılık kanıtı değildir.")
+    if map_mode == "Kafe rekabeti (25 kare)" or (map_mode == "Birleşik kafe haritası" and color_col == "competition_level"):
         st.caption("Renkler aşılan eşik sayısını gösterir: gri 0, sarı 1, turuncu 2, kırmızı 3. "
                    "Eşikler merkez ≥2, toplam 9 kare ≥6, toplam 25 kare ≥13. "
                    "Gri alan otomatik olarak iyi konum değildir; bu katman uygunluk puanından ayrıdır.")

@@ -78,6 +78,15 @@ $$\text{Suitability Score} = 100 \times (0.30D + 0.25A + 0.20P + 0.15T + 0.10S)$
 
 ## Café competition map (exploratory layer)
 
+The default **Birleşik kafe haritası** overlays mapped OSM café points on the
+300 m cells. Switch the cell colour between suitability and competition; a cell
+tooltip shows both scores and its 1/9/25-cell counts. When café coordinates are
+absent, the existing suitability grid still opens with a clear download prompt.
+Use **Yalnızca kafeleri indir / yenile** to retrieve just the café points and
+calculate competition on the fly, without downloading every other POI and road
+network. This requires a working Overpass connection. The downloaded file stays
+on the local machine; it is not part of the current repository ZIP.
+
 The app has a separate **Kafe rekabeti (25 kare)** map. For each 300 m cell it counts distinct mapped cafés in the centre cell, the surrounding 3×3 block (9 cells total), and the 5×5 block (25 cells total, up to 1.5×1.5 km). A warning is added for each threshold crossed: centre **≥2**, 9 cells **≥6**, 25 cells **≥13**. Grey/yellow/orange/red means **0/1/2/3 warnings**; grey is not automatically a good location. Selecting a cell in the sidebar or top-10 table shows the three counts and warns when district-edge cells have fewer neighbours.
 
 These are user-defined preliminary competition thresholds, **not** coefficients fitted to sales or proof that existing cafés are successful. Café clustering can indicate activity and competition at the same time; demand and competition should be checked on site. This layer does **not** change the main MCDA score or the Random Forest model. Restaurants remain contextual/complementary features, not a second restaurant-site recommendation.
