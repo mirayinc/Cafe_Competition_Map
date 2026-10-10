@@ -1,8 +1,8 @@
 """Explainable multi-criteria café suitability (not a profit model).
 
 Existing cafés are *not* treated as successful businesses. This module only
-combines demand, access, population, complementary activity and relative
-saturation into a 0–100 score a planner can inspect and re-weight.
+combines demand, access and population with conditional café clustering
+and café competition into a 0–100 score a planner can inspect and re-weight.
 """
 
 from __future__ import annotations
@@ -14,38 +14,32 @@ from sklearn.preprocessing import MinMaxScaler
 
 from src.create_grid import PROCESSED_DIR, ROOT
 
-# Default mix is a documented prior for a convenience café, not a fitted model.
-# See WEIGHT_RATIONALE and README. Sliders in the app re-normalise any mix.
+# User scenario weights, not fitted coefficients. Positive contributions alone
+# are normalized; penalty magnitudes are retained. See WEIGHT_RATIONALE.
 DEFAULT_WEIGHTS = {
-    "demand_score": 0.30,
+    "demand_score": 0.45,
     "accessibility_score": 0.25,
     "population_score": 0.20,
-    "complementary_score": 0.15,
-    "saturation_score": 0.10,
+    "similar_place_density_score": 0.05,
+    "competition_score": 0.05,
 }
-
 PILLAR_LABELS = {
-    "demand_score": "Potansiyel talep",
-    "accessibility_score": "Ulaşım ve yaya erişimi",
-    "population_score": "Nüfus yoğunluğu",
-    "complementary_score": "Tamamlayıcı işletmeler",
-    "saturation_score": "Fırsat ve doygunluk",
+    "demand_score": "Potansiyel talep (+)",
+    "accessibility_score": "Ulaşım ve yaya erişimi (+)",
+    "population_score": "Nüfus yoğunluğu (+)",
+    "similar_place_density_score": "Çevrede benzer yer yoğunluğu (+)",
+    "competition_score": "Aynı tür işletme rekabeti (−)",
 }
-
+POSITIVE_KEYS = ("demand_score", "accessibility_score", "population_score")
 WEIGHT_RATIONALE = """
-Ağırlıklar, paket servis ve oturmalı bir kafe modeli için literatür tabanlı belirlenmiş bir ön kabuldür (prior).
-
-Bu ağırlıklar ciro veya gelir verisinden tahmin edilmemiştir; projede kârlılık, kira veya kapanma verisi bulunmadığı için ağırlıklar "başarıya" uydurulmamıştır (overfit edilmemiştir).
-
-- **Potansiyel Talep (%30):** Perakende konumlandırmada Huff (1964) yerçekimi (gravity) modeli yaklaşımı, çekim alanının büyüklüğünü ve hareket üreten odak noktalarını ziyaretçi sayısının ana belirleyicisi sayar. Üniversiteler, mağazalar, parklar, okullar ve POI çeşitliliği bu çekim alanını temsil eder.
-- **Erişilebilirlik (%25):** Kafeler kolaylık/uğrak işletmeleridir; otobüs durakları, metro istasyonuna yakınlık ve yol kesişimleri insanların o noktaya fiilen nasıl ulaşabileceğini belirler. İyi bağlantılı ama tenha bir dış mahallede kafe potansiyeli sınırlı kalacağı için talebin hemen arkasında yer alır.
-- **Nüfus (%20):** İkamet eden nüfus taban taleptir. TÜİK mahalle toplamları 300 metrelik hücrelere alansal payla dağıtıldığından bu vekil görecelidir; haritayı tek başına domine etmesine izin verilmez.
-- **Tamamlayıcı İşletmeler (%15):** Yakın çevredeki restoranlar ve mağazalar canlı, karma kullanımlı sokakları (pozitif kümelenme/agglomeration etkisi) gösterir. Aynı kategorideki kafeler rekabet nedeniyle burada sayılmaz.
-- **Doygunluk ve Fırsat (%10):** Rekabet önemlidir; ancak içinde hiç kafe olmayan bir hücre otomatik olarak bir fırsat boşluğu değildir; orada talep de olmayabilir. Bağıl doygunluk `Kafe / (Talep Vekili + 1)` formülüyle hesaplanıp ters çevrilir. OpenStreetMap kafe kayıtları eksik olabileceğinden ve satışlarda aşırı doygunluk doğrudan gözlemlenemediğinden bu ağırlık kontrollü ve düşük tutulmuştur.
-
-Her bir bileşene tek tek uygulanan ±%10'luk duyarlılık şoku, bu ön kabulün küçük hareketlerinde hücre sıralamalarının bozulmadığını (kararlılığını) doğrulamak için kullanılır.
+Ağırlıklar kullanıcı tarafından belirlenmiş senaryo tercihleridir; kârlılıktan öğrenilmedi.
+Talep %45, erişim %25, nüfus %20 temel katkıyı oluşturur.
+500 m içindeki kafe yoğunluğu rekabet eşiği aşılmadığında en fazla +5 puan ekler.
+Rekabet eşiği aşılırsa bonus kapanır; her eşik 5/3, toplam en fazla 5 puan düşürür.
+Temel katkılar kendi toplamına bölünür; sonuç 0–100 aralığında tutulur.
+Popülerlik–mekân uyumluluğu %10 olarak planlanmıştır; bağımsız veri yoktur,
+hesaplamaya katılmaz. Eski literatür gerekçesi bu yeni ağırlıkları doğrulamaz.
 """
-
 
 
 def _minmax(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
@@ -70,15 +64,21 @@ def _metro_proximity(distance_m: pd.Series) -> pd.Series:
     return 1.0 / (1.0 + dist)
 
 
+DEMAND_FEATURES = {
+    "universities_1000m": 0.30, "shops_500m": 0.25,
+    "schools_750m": 0.15, "parks_500m": 0.10,
+    "offices_500m": 0.10, "government_500m": 0.05,
+    "kindergartens_500m": 0.05,
+}
+
+
 def demand_proxy(grid: pd.DataFrame) -> pd.Series:
-    """Count-like activity used in the saturation ratio (not yet 0–1)."""
-    uni = pd.to_numeric(grid.get("universities_1000m", 0), errors="coerce").fillna(0)
-    shops = pd.to_numeric(grid.get("shops_500m", 0), errors="coerce").fillna(0)
-    parks = pd.to_numeric(grid.get("parks_500m", 0), errors="coerce").fillna(0)
-    schools = pd.to_numeric(grid.get("schools_750m", 0), errors="coerce").fillna(0)
-    rest = pd.to_numeric(grid.get("restaurants_500m", 0), errors="coerce").fillna(0)
-    diversity = pd.to_numeric(grid.get("poi_diversity", 0), errors="coerce").fillna(0)
-    return uni * 4.0 + shops + rest * 0.5 + parks + schools * 0.5 + diversity
+    """Demand generators only; cafés/restaurants are excluded."""
+    result = pd.Series(0.0, index=grid.index)
+    for col, weight in DEMAND_FEATURES.items():
+        if col in grid:
+            result += weight * pd.to_numeric(grid[col], errors="coerce").fillna(0).clip(lower=0)
+    return result
 
 
 def normalize_weights(weights: dict[str, float] | None) -> dict[str, float]:
@@ -93,73 +93,55 @@ def normalize_weights(weights: dict[str, float] | None) -> dict[str, float]:
 
 
 def build_pillars(grid: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Create 0–1 pillar scores from engineered cell features."""
     out = grid.copy()
-    out["metro_proximity"] = _metro_proximity(out.get("metro_distance", pd.Series(dtype=float)))
-    out["demand_proxy"] = demand_proxy(out)
-    cafes = pd.to_numeric(out.get("cafes_500m", 0), errors="coerce").fillna(0)
-    out["saturation_ratio"] = cafes / (out["demand_proxy"] + 1.0)
-
-    scaled = _minmax(
-        out,
-        [
-            "universities_1000m",
-            "shops_500m",
-            "poi_diversity",
-            "parks_500m",
-            "schools_750m",
-            "hospitals_1000m",
-            "bus_stops_400m",
-            "metro_proximity",
-            "road_intersections",
-            "population_density",
-            "population",
-            "restaurants_500m",
-            "saturation_ratio",
-        ],
-    )
-
-    out["demand_score"] = (
-        0.30 * scaled["universities_1000m"]
-        + 0.25 * scaled["shops_500m"]
-        + 0.20 * scaled["poi_diversity"]
-        + 0.15 * scaled["parks_500m"]
-        + 0.10 * scaled["schools_750m"]
-    )
+    demand_cols = [c for c in DEMAND_FEATURES if c in out and out[c].notna().any()]
+    scaled = _minmax(out, demand_cols)
+    total = sum(DEMAND_FEATURES[c] for c in demand_cols)
+    out["demand_score"] = sum(
+        (DEMAND_FEATURES[c] * scaled[c].fillna(0) for c in demand_cols),
+        pd.Series(0.0, index=out.index),
+    ) / total if total else 0.0
+    out["demand_missing_features"] = ", ".join(c for c in DEMAND_FEATURES if c not in demand_cols)
+    out["metro_proximity"] = _metro_proximity(out.get("metro_distance", pd.Series(index=out.index, dtype=float)))
+    scaled = _minmax(out, ["bus_stops_400m", "metro_proximity", "road_intersections", "population_density", "population"])
     out["accessibility_score"] = (
-        0.45 * scaled["bus_stops_400m"]
-        + 0.35 * scaled["metro_proximity"]
-        + 0.20 * scaled["road_intersections"]
+        .45 * scaled["bus_stops_400m"] + .35 * scaled["metro_proximity"] + .20 * scaled["road_intersections"]
     )
-    pop_col = "population_density" if "population_density" in scaled.columns else "population"
-    out["population_score"] = scaled[pop_col]
-    out["complementary_score"] = 0.60 * scaled["restaurants_500m"] + 0.40 * scaled["shops_500m"]
-    # High café-per-demand → low opportunity. Empty cells with no demand stay mid/low.
-    out["saturation_score"] = 1.0 - scaled["saturation_ratio"]
-
-    # --- Second-pass rescaling ---
-    # Each pillar is a weighted sub-sum of MinMax features; no single cell can score
-    # 1.0 on every sub-feature simultaneously, so raw pillar max is typically 0.5–0.9.
-    # Rescaling pillars to [0, 1] ensures the final suitability score reaches ~90-100
-    # for the genuinely best cells and makes the colour map meaningful.
-    pillar_cols = list(PILLAR_LABELS.keys())
-    out = _minmax(out, pillar_cols)
+    out["population_score"] = scaled["population_density" if "population_density" in scaled else "population"]
+    out = _minmax(out, list(POSITIVE_KEYS))
+    # Café counts are an observable clustering proxy, not measured demand.
+    cafes = pd.to_numeric(out.get("cafes_500m", pd.Series(float("nan"), index=out.index)), errors="coerce").replace([np.inf, -np.inf], np.nan).clip(lower=0)
+    # Max scaling preserves zero = no mapped cafés, even for constant counts.
+    maximum = cafes.max()
+    out["similar_place_density_score"] = cafes / maximum if maximum > 0 else cafes.where(cafes.isna(), 0.0)
+    level = pd.to_numeric(out.get("competition_level", pd.Series(float("nan"), index=out.index)), errors="coerce")
+    out["competition_score"] = level.clip(0, 3) / 3.0
+    out["popularity_score"] = float("nan")
     return out
 
 
 def apply_weights(grid: gpd.GeoDataFrame, weights: dict[str, float] | None = None) -> gpd.GeoDataFrame:
-    mix = normalize_weights(weights)
+    # Keep penalty magnitudes unchanged; only positive contributions are normalized.
+    raw = dict(DEFAULT_WEIGHTS)
+    if weights is not None:
+        raw.update({k: max(float(v), 0.0) for k, v in weights.items() if k in DEFAULT_WEIGHTS})
+    if not any(raw.values()):
+        raw = dict(DEFAULT_WEIGHTS)
     out = grid.copy()
-    out["suitability_score"] = 100.0 * (
-        mix["demand_score"] * out["demand_score"]
-        + mix["accessibility_score"] * out["accessibility_score"]
-        + mix["population_score"] * out["population_score"]
-        + mix["complementary_score"] * out["complementary_score"]
-        + mix["saturation_score"] * out["saturation_score"]
-    )
-    out["suitability_score"] = out["suitability_score"].clip(0, 100).round(1)
+    positive_total = sum(raw[k] for k in POSITIVE_KEYS)
+    positive = sum((raw[k] * out[k] for k in POSITIVE_KEYS), pd.Series(0.0, index=out.index))
+    out["positive_contribution"] = 100 * positive / positive_total if positive_total else 0.0
+    competition = out["competition_score"]
+    density = out["similar_place_density_score"]
+    # Missing competition cannot establish eligibility for a positive bonus.
+    out["similar_place_density_bonus"] = (100 * raw["similar_place_density_score"] * density).where(competition.eq(0), 0.0).mask(competition.isna())
+    out["competition_penalty"] = 100 * raw["competition_score"] * competition
+    out["score_provisional"] = ((competition.isna() & (raw["competition_score"] > 0 or raw["similar_place_density_score"] > 0)) | (competition.eq(0) & density.isna() & (raw["similar_place_density_score"] > 0)))
+    out["suitability_score"] = (
+        out["positive_contribution"] + out["similar_place_density_bonus"].fillna(0) - out["competition_penalty"].fillna(0)
+    ).clip(0, 100).round(1)
     for col in PILLAR_LABELS:
-        out[f"{col}_100"] = (100.0 * out[col]).clip(0, 100).round(1)
+        out[f"{col}_100"] = (100 * out[col]).clip(0, 100).round(1)
     return out
 
 
@@ -179,8 +161,9 @@ def top_cells(grid: gpd.GeoDataFrame, n: int = 10) -> pd.DataFrame:
         "demand_score_100",
         "accessibility_score_100",
         "population_score_100",
-        "complementary_score_100",
-        "saturation_score_100",
+        "competition_score_100",
+        "competition_penalty", "similar_place_density_bonus", "score_provisional",
+        "similar_place_density_score_100",
         "cafe_similarity_score",
         "cafes_500m",
         "bus_stops_400m",
@@ -207,7 +190,7 @@ def sensitivity_table(grid: gpd.GeoDataFrame, delta: float = 0.10, top_n: int = 
             shocked[key] = max(DEFAULT_WEIGHTS[key] + sign * delta, 0.0)
             alt = score_grid(grid, shocked)
             alt_top = set(top_cells(alt, n=top_n)["cell_id"])
-            overlap = len(base_top & alt_top) / top_n if top_n else 0.0
+            overlap = len(base_top & alt_top) / len(base_top) if base_top else 0.0
             merged = base[["cell_id", "suitability_score"]].merge(
                 alt[["cell_id", "suitability_score"]],
                 on="cell_id",

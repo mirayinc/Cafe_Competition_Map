@@ -1,218 +1,134 @@
 # Retail Location Intelligence
 
-**An Explainable Geospatial Decision-Support System for Café Site Selection in Çankaya, Ankara**
+### Explainable café site selection in Çankaya, Ankara
+**Samsung Innovation Campus — AI in Marketing Capstone Project · Group 6**
 
-This project develops an explainable, data-driven geospatial decision-support system that evaluates and ranks potential café locations across Çankaya, Ankara using open geographic data (OpenStreetMap) and demographic data (TÜİK ADNKS).
+[English](README.md) · [Türkçe](README_TR.md)
 
-> ⚠️ **What this project is NOT:**  
-> This system is **not a revenue forecasting or commercial success prediction model**. The dataset does not contain sales turnover, profit margins, rental rates, foot traffic counts, or business closure history. The objective is not to guarantee financial profitability, but to provide urban planners, retail analysts, and entrepreneurs with a transparent, explainable spatial scoring matrix grounded in accessibility, potential demand, population density, and market saturation.
+This repository is the version of [Group 6’s shared capstone project](https://github.com/edasaruhan/SIC_AI_17_Capstone_Group_6) adapted for Miray İnci Başaran’s GitHub account. Team contributions and the MIT license are preserved.
 
----
+An AI-supported market planning tool that aims to help café entrepreneurs shortlist candidate areas faster by comparing access to their intended customer surroundings and competition.
 
-## 📌 Core Philosophy & Methodology
+Population, nearby institutions and transport are indirect access indicators. The project does not observe customer preferences, segment membership or actual footfall.
 
-- **Presence $\neq$ Profitability:** The presence of existing cafés in a cell does not imply that those businesses are profitable or well-run. Conversely, a cell without cafés is not inherently a poor location or an unexploited commercial opportunity.
-- **Dual-Layer Evaluation Framework:**
-  1. **Explainable Multi-Criteria Decision Analysis (MCDA):** A transparent, literature-grounded scoring engine based on the Huff (1964) retail gravity model, evaluating five distinct spatial pillars (0–100 scale).
-  2. **Café-Location Similarity Classifier (Random Forest):** A machine learning model trained using spatial cross-validation to answer: *"To what extent does this location resemble areas where cafés typically operate?"*
+> **Purpose:** compare locations transparently. Scores do not predict revenue, profit or business success.
 
----
+## 1. The Problem
 
-## 🏗️ System Architecture & Workflow
+Choosing a café location requires balancing nearby activity, accessibility, residential population and competition. These signals are scattered across maps and datasets, making an initial comparison difficult.
+
+**Proposed business KPI:** reduce the time needed to prepare a candidate-area shortlist compared with a manual map review. This is a future pilot measure; no time saving has been demonstrated.
+
+## 2. Our Solution
+
+The Streamlit dashboard combines two separate perspectives:
+
+| Layer | Question it answers |
+| --- | --- |
+| **MCDA suitability score** | How does a location rank under the selected demand, access, population and competition weights? |
+| **Random Forest similarity score** | How closely does it resemble areas with mapped cafés? |
+
+Users can select neighborhoods, adjust weights, compare locations on 2D/3D maps and inspect score contributions.
+
+**Market–user–location approach:** The product connects the market context (demand generators, population and similar businesses), the user (a café entrepreneur and their intended customer surroundings), and location (300 m cells, neighborhoods and access). It supports location-focused marketing decisions without tracking individual customers.
+
+### Connection to United Nations goals
+
+| Goal | Intended project connection |
+| --- | --- |
+| [SDG 3: Good Health and Well-being](https://sdgs.un.org/goals/goal3) | Indirectly support accessible social places through park and pedestrian-access indicators. Health outcomes have not been measured. |
+| [SDG 8: Decent Work and Economic Growth](https://sdgs.un.org/goals/goal8) | Help entrepreneurs assess market conditions and competition to inform local business planning. Employment growth and job quality have not been measured. |
+| [SDG 11: Sustainable Cities and Communities](https://sdgs.un.org/goals/goal11) | Make public transport, parks and neighborhood access visible in site selection. Safety and resilience are outside the current scoring model. |
+
+These are design intentions, not demonstrated sustainability outcomes.
+
+## 3. Data and Workflow
+
+**Sources:** OpenStreetMap places and street networks, plus a neighborhood population CSV labeled TÜİK ADNKS 2025.
+
+**Committed snapshot:** 5,361 cells in a 300 m grid, with 121 neighborhood labels. Population is distributed by overlapping area; it is a residential proxy, not measured footfall.
 
 ```mermaid
 flowchart TD
-    A["OpenStreetMap (via OSMnx)"] --> B["Data Cleaning & Normalization"]
-    T["TÜİK ADNKS Mahalle Population"] --> B
-    B --> C["Discretize Çankaya into 300×300 m Grid (5,361 Cells)"]
-    C --> D["Spatial Feature Engineering (Buffers, Centroids & Spatial Joins)"]
-    D --> E["Explainable MCDA Suitability Scoring (5 Pillars)"]
-    D --> F["Random Forest Café-Similarity Model (Spatial CV, k=5)"]
-    E --> G["Interactive Decision-Support UI (Streamlit + PyDeck 3D/2D)"]
-    F --> G
+    A["OSM + population data"] --> B["Spatial features"]
+    B --> C["MCDA suitability"]
+    B --> D["Random Forest similarity"]
+    C --> E["Interactive map + shortlist"]
+    D --> E
 ```
 
----
+## 4. Scoring and AI
 
-## 📊 Data Sources
+**Suitability:** demand 45%, access 25% and population 20% form the positive contribution. Similar-place density is the café count within 500 m divided by the district-wide maximum. With no competition threshold crossed, it adds up to 5 points. Once a threshold is crossed, the bonus is disabled and each threshold deducts 5/3 points, up to 5 total. Missing competition data disables the bonus and makes the score provisional. Positive weights normalize within their own total; the final score is clipped to 0–100.
 
-| Source | Role / Usage | Coverage & Details |
-| --- | --- | --- |
-| **OpenStreetMap (OSMnx)** | District boundaries; target use (`amenity=cafe`); restaurants/fast food; universities, schools, hospitals, parks, retail (`shop=*`); bus stops, subway stations, pedestrian/drive street networks | Active (10+ thematic layers) |
-| **TÜİK ADNKS** | Neighborhood-level (`mahalle`) total population distributed across 300 m cells via areal weighting | Active (with areal median density imputation for unmapped units) |
-| **Ankara Metropolitan Municipality ([Şeffaf Ankara](https://www.ankara.bel.tr/))** | EGO public transit boardings, route frequencies, municipal Wi-Fi access points, social infrastructure | Planned roadmap integration |
+Weights are user-selected scenarios, not coefficients learned from commercial outcomes. Popularity compatibility is planned and currently disabled.
 
-*Note: Large polygonal geometries (university campuses, municipal parks, hospital compounds) are collapsed to geometric centroids prior to radius-based spatial aggregations.*
+**Similarity:** Random Forest uses 300 trees and five-fold cross-validation grouped by neighborhood. The target is at least one mapped café within 500 m. Direct café counts and café-containing diversity are excluded from model inputs; missing-value medians are fitted within each training fold. Displayed scores use held-out predictions only.
 
----
+## 5. Results and Validation
 
-## 📅 Project Milestones & Status
+| Evidence | Recorded result |
+| --- | --- |
+| Corrected spatial validation | **Mean fold ROC-AUC: 0.960** |
+| Software checks after the model fixes | **43 tests passed on Python 3.11 and 3.12** |
+| Commercial impact | Not yet measured |
 
-| Phase | Core Objective | Status |
-| :---: | :--- | :---: |
-| **Week 1** | OpenStreetMap data extraction pipeline and POI taxonomy for Çankaya | ✅ Complete |
-| **Week 2** | 300 m hexagonal/square grid generation and spatial buffer feature engineering | ✅ Complete |
-| **Week 3** | Weighted suitability scoring engine (MCDA), sensitivity analysis & UI explanation | ✅ Complete |
-| **Week 4** | Random Forest café-similarity model (with spatial group cross-validation) | ✅ Complete |
-| **Week 5** | Interactive PyDeck visualizer, dynamic filtering, 28-test unit suite, Docker & CI/CD | ✅ Complete |
+The validation uses the committed snapshot without an OSM refresh. ROC-AUC measures discrimination for mapped café presence, not profitability. See [validation details](docs/model_validation.md).
 
----
+## 6. Current Status and Limits
 
-## 📐 Scoring Methodology (MCDA Engine)
+- **Implemented:** café analysis, maps, filters, adjustable scoring, similarity, tests and Docker configuration.
+- **Provisional data:** the committed snapshot lacks raw café coordinates and newer demand/competition layers; missing penalties are disclosed and affected scores are marked provisional.
+- **Refresh required:** newer school counts require explicit ISCED 2/3 tags; the committed counts are generic. OSM refresh needs working external services.
+- **Evaluation limit:** neighborhood holdouts can still share spatial buffers across borders; no independent external test set is recorded.
+- **Deployment:** local/self-hosted prototype; a live public service and successful container deployment are not verified.
+- **Field checks:** OSM completeness, rents, pedestrian activity and customer fit must be assessed before investment.
 
-Every 300×300 m cell receives scores across five independent pillars (scaled 0–1), which undergo a second-pass Min–Max normalization to ensure full dynamic range before computing the final composite suitability score:
+## 7. Run the App
 
-$$\text{Suitability Score} = 100 \times (0.30D + 0.25A + 0.20P + 0.15T + 0.10S)$$
-
-| Pillar | Weight | Metric Inputs | Literature Rationale |
-| --- | :---: | --- | --- |
-| **D (Potential Demand)** | 30% | Universities (1 km), shops (500 m), parks (500 m), schools (750 m), and POI diversity | Huff (1964) gravity model: Major activity generators and catchment size are primary drivers of customer visits. |
-| **A (Accessibility & Transit)** | 25% | Bus stops (400 m), inverse network distance to subway stations, and road intersection density | Cafés are convenience goods; customers rarely travel to poorly connected or inaccessible peripheries. |
-| **P (Population Density)** | 20% | Areal-weighted residential population per cell | Represents baseline residential demand floor; constrained to 20% to avoid coarse mahalle boundaries dominating the map. |
-| **T (Complementary Businesses)** | 15% | Restaurants, fast food outlets, and non-café retail establishments (500 m) | Positive agglomeration economies; mixed-use commercial vibrancy supports secondary café footfall. |
-| **S (Opportunity vs. Saturation)** | 10% | Inverse relative saturation: $\frac{\text{Cafés (500 m)}}{\text{Demand Proxy} + 1}$ | Captures competitive pressure. A cell with zero cafés is not an automatic opportunity if demand is also zero. |
-
-> **Sensitivity Analysis:** The Streamlit dashboard enables users to dynamically adjust weights (automatically normalized to 100%). It also runs an automated one-at-a-time $\pm 10\%$ perturbation stress test, reporting **Spearman rank correlation** and Top-50 rank overlap to demonstrate ranking stability.
-
----
-
-## Café competition map (exploratory layer)
-
-The default **Birleşik kafe haritası** overlays mapped OSM café points on the
-300 m cells. Switch the cell colour between suitability and competition; a cell
-tooltip shows both scores and its 1/9/25-cell counts. When café coordinates are
-absent, the existing suitability grid still opens with a clear download prompt.
-Use **Yalnızca kafeleri indir / yenile** to retrieve just the café points and
-calculate competition on the fly, without downloading every other POI and road
-network. This requires a working Overpass connection. The downloaded file stays
-on the local machine; it is not part of the current repository ZIP.
-
-The app has a separate **Kafe rekabeti (25 kare)** map. For each 300 m cell it counts distinct mapped cafés in the centre cell, the surrounding 3×3 block (9 cells total), and the 5×5 block (25 cells total, up to 1.5×1.5 km). A warning is added for each threshold crossed: centre **≥2**, 9 cells **≥6**, 25 cells **≥13**. Grey/yellow/orange/red means **0/1/2/3 warnings**; grey is not automatically a good location. Selecting a cell in the sidebar or top-10 table shows the three counts and warns when district-edge cells have fewer neighbours.
-
-These are user-defined preliminary competition thresholds, **not** coefficients fitted to sales or proof that existing cafés are successful. Café clustering can indicate activity and competition at the same time; demand and competition should be checked on site. This layer does **not** change the main MCDA score or the Random Forest model. Restaurants remain contextual/complementary features, not a second restaurant-site recommendation.
-
-The committed feature Parquet does not yet include the new grid counts, and raw café coordinates are not committed. To use the layer, click **OSM verisini indir / yenile** in the app (requires Overpass access), or run `python -m src.collect_osm_data` followed by `python -m src.build_features` and restart the app. Without café coordinates the app explicitly marks the competition layer unavailable rather than deriving counts from `cafes_500m`.
-
----
-
-## 🤖 Random Forest Café-Similarity Model (Week 4)
-
-To complement the deductive MCDA score with inductive machine learning, a secondary comparison model was developed:
-
-- **Objective:** Quantify how closely a cell's spatial attributes match typical café locations (`cafe_similarity_score`, 0–100).
-- **Target Formulation:** Binary label `cafes_500m >= 1`. *Existing café counts are explicitly excluded from feature columns to prevent target leakage.*
-- **Spatial Validation:** Standard K-Fold splits suffer from spatial autocorrelation leakage (neighboring cells sharing similar feature spaces). We employ **Stratified Group 5-Fold Cross-Validation** grouped on `mahalle_name`, ensuring entire neighborhoods are held out during testing.
-- **Model Performance:** **0.979 ROC-AUC** across 5 out-of-fold spatial splits.
-- **Gini Feature Importances:**
-  1. POI Diversity (30.2%)
-  2. Retail Shops within 500 m (15.4%)
-  3. Restaurants within 500 m (15.0%)
-  4. Subway Station Proximity (10.7%)
-  5. Parks within 500 m (8.4%)
-  6. Population Density (6.9%)
-
----
-
-## 🧪 Unit Testing Suite
-
-The repository includes a `pytest` suite verifying scoring mathematics, weight bounds, leakage prevention, spatial features, competition counts, and machine learning outputs:
+Use **Python 3.11 or 3.12**.
 
 ```bash
-pytest tests/ -v
-```
-
-- `test_scoring.py`: Weight normalization, non-negativity clipping, 0–1 pillar range validation, post-rescaling ceiling checks, Top-N cell ranking, and Spearman sensitivity computations.
-- `test_cafe_similarity.py`: Feature matrix integrity, zero-leakage verification (`cafes_500m` absence), 0–100 probability calibration, spatial CV fold dimensions, and feature importance table formatting.
-- `test_cafe_grid_competition.py`: Nested unique café counts, threshold boundaries, and district-edge coverage.
-
----
-
-## 🚀 Quick Start Guide
-
-### Prerequisites
-- Python 3.11 or 3.12.
-- GDAL / GEOS spatial libraries (installed automatically in virtual environments or via package managers).
-
-### 1. Local Setup
-```bash
-# Clone the repository
-git clone https://github.com/edasaruhan/SIC_AI_17_Capstone_Group_6.git
-cd SIC_AI_17_Capstone_Group_6
-
-# Create and activate virtual environment
+git clone https://github.com/mirayinc/SIC_AI_17_Cafe_Competition_Map.git
+cd SIC_AI_17_Cafe_Competition_Map
 python -m venv .venv
-.venv\Scripts\Activate.ps1       # Windows PowerShell
-# source .venv/bin/activate      # Linux / macOS
-
-# Install dependencies
-pip install -r requirements.txt
-pip install pytest
-
-# Execute unit tests
-pytest tests/ -v
-
-# Launch the Streamlit application
-streamlit run app.py
 ```
 
-### 2. Docker Deployment
-A containerized image configured with GDAL, GEOS, and PROJ dependencies is available:
+Activate the environment:
+
+| Platform | Command |
+| --- | --- |
+| macOS / Linux | `source .venv/bin/activate` |
+| Windows PowerShell | `.venv\Scripts\Activate.ps1` |
 
 ```bash
-# Build the Docker image
-docker build -t retail-location-intelligence .
-
-# Run containerized service on port 8501
-docker run -p 8501:8501 retail-location-intelligence
-```
-Access the application at `http://localhost:8501`.
-
----
-
-## 📁 Repository Layout
-
-```text
-SIC_AI_17_Capstone_Group_6/
-├── .github/
-│   └── workflows/
-│       └── ci.yml               # GitHub Actions automated test pipeline
-├── data/
-│   ├── raw/                     # Raw GeoJSON files (OSM extracts, district boundary)
-│   └── processed/               # Compact spatial feature grid (cankaya_grid_features.parquet)
-├── src/
-│   ├── __init__.py
-│   ├── collect_osm_data.py      # Overpass API extraction for POIs and street networks
-│   ├── create_grid.py           # 300x300 m spatial tessellation engine
-│   ├── build_features.py        # Spatial joins, buffers, and count aggregations
-│   ├── allocate_population.py   # TÜİK population areal-weighting with spatial interpolation
-│   ├── tuik.py                  # Census data parser and neighborhood key mapper
-│   ├── attach_streets.py        # Spatial nearest-street labeling for cells
-│   ├── scoring.py               # 5-Pillar MCDA scoring, normalization, sensitivity analysis
-│   ├── cafe_similarity.py       # Random Forest similarity classifier (Spatial Group CV)
-│   ├── cafe_grid_competition.py # Nested 1/9/25-cell café competition warnings
-│   └── visualization.py         # PyDeck 2D/3D map renderers and tooltip builders
-├── tests/
-│   ├── __init__.py
-│   ├── test_scoring.py          # MCDA and scoring logic tests (17 tests)
-│   └── test_cafe_similarity.py  # Machine learning and leakage tests (11 tests)
-├── app.py                       # Streamlit web application & decision dashboard
-├── Dockerfile                   # Production container definition
-├── requirements.txt             # Python package dependencies
-└── README.md                    # Project documentation
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
 ```
 
----
+Open **http://localhost:8501**. Spatial-library installation depends on the platform and available package wheels.
 
-## ⚠️ Academic Limitations & Assumptions
+Optional tests: `python -m pip install pytest`, then `python -m pytest tests/ -v`.
 
-1. **Demand Metrics Are Proxies:** Without sensor-based pedestrian counters or telco-provided mobility matrices, foot traffic is approximated via POI density, transit hubs, and residential population.
-2. **Age Cohort Granularity:** TÜİK ADNKS reports age-segmented demographics at municipal level, but not at granular neighborhood scale; total population is utilized as an areal baseline.
-3. **OpenStreetMap Incompleteness:** While Çankaya is extensively mapped, informal or recently opened retail outlets may lag in OSM updates.
-4. **Commercial Outcome Disclaimers:** Suitability rankings reflect multi-criteria locational favorability, not an audited business feasibility report or income projection.
+Optional Docker: `docker build -t retail-location-intelligence .`, then `docker run -p 8501:8501 retail-location-intelligence`.
 
----
+## 8. Capstone Reports
 
-## 📜 License
+[Five-minute capstone presentation](docs/Capstone_Presentation.pptx) — English slides with Turkish speaker notes.
 
-This project is licensed under the [MIT License](LICENSE).  
-OpenStreetMap data is © OpenStreetMap contributors and distributed under the [ODbL](https://www.openstreetmap.org/copyright).
+| Assignment | English PDF |
+| --- | --- |
+| 1 | [Literature, data and technology review](docs/assignments/Assignment_1_Review.pdf) |
+| 2 | [Model refinement and testing](docs/assignments/Assignment_2_Refinement_Testing.pdf) |
+| 3 | [Literature, data and technology review](docs/assignments/Assignment_3_Review.pdf) |
+| 4 | [Data preparation and model exploration](docs/assignments/Assignment_4_Preparation_Modeling.pdf) |
+| 5 | [Model refinement and testing](docs/assignments/Assignment_5_Refinement_Testing.pdf) |
+| 6 | [Deployment](docs/assignments/Assignment_6_Deployment.pdf) |
+
+Assignments 1/3 and 2/5 have the same supplied scope. Reports document implementation commit `58ce550`.
+
+[User guide (Turkish)](docs/temel_kullanim.md) · [Data dictionary](data/data_dictionary.md)
+
+**License:** [MIT](LICENSE). Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), ODbL.
+
+

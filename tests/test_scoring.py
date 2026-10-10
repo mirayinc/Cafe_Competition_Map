@@ -16,6 +16,7 @@ def _make_grid(n: int = 20, seed: int = 42) -> gpd.GeoDataFrame:
     df = gpd.GeoDataFrame(
         {
             "cell_id": range(n),
+            "competition_level": rng.integers(0, 4, n),
             "mahalle_name": [f"Mahalle_{i % 5}" for i in range(n)],
             "universities_1000m": rng.integers(0, 10, n),
             "shops_500m": rng.integers(0, 50, n),
@@ -42,6 +43,8 @@ def _make_grid(n: int = 20, seed: int = 42) -> gpd.GeoDataFrame:
 
 from src.scoring import (
     DEFAULT_WEIGHTS,
+    POSITIVE_KEYS,
+    apply_weights,
     PILLAR_LABELS,
     build_pillars,
     normalize_weights,
@@ -58,8 +61,8 @@ class TestNormalizeWeights:
 
     def test_custom_sums_to_one(self):
         custom = {"demand_score": 0.5, "accessibility_score": 0.3,
-                  "population_score": 0.1, "complementary_score": 0.05,
-                  "saturation_score": 0.05}
+                  "population_score": 0.1, "competition_score": 0.05,
+                  "similar_place_density_score": 0.05}
         w = normalize_weights(custom)
         assert abs(sum(w.values()) - 1.0) < 1e-9
 
@@ -95,7 +98,7 @@ class TestBuildPillars:
         """After second-pass rescaling each pillar's best cell should be ~1.0."""
         grid = _make_grid(n=50)
         out = build_pillars(grid)
-        for col in PILLAR_LABELS:
+        for col in POSITIVE_KEYS:
             assert out[col].max() > 0.95, f"{col} max too low: {out[col].max():.3f}"
 
 
@@ -127,15 +130,17 @@ class TestScoreGrid:
             assert f"{col}_100" in scored.columns
 
     def test_custom_weights_change_ranking(self):
-        grid = _make_grid(n=30, seed=1)
-        default_scored = score_grid(grid)
-        inverted = {k: 1.0 - v for k, v in DEFAULT_WEIGHTS.items()}
-        alt_scored = score_grid(grid, inverted)
-        default_top = int(default_scored.nlargest(1, "suitability_score")["cell_id"].iloc[0])
-        alt_top = int(alt_scored.nlargest(1, "suitability_score")["cell_id"].iloc[0])
-        # Inverted weights should produce a different top cell (most of the time)
-        # This is a probabilistic check; if it ever fails it signals a bug
-        assert isinstance(default_top, int) and isinstance(alt_top, int)
+        pillars = pd.DataFrame({
+            "cell_id": [0, 1], "demand_score": [1.0, 0.0],
+            "accessibility_score": [0.0, 1.0], "population_score": [0.0, 0.0],
+            "similar_place_density_score": [0.0, 0.0], "competition_score": [0.0, 0.0],
+        })
+        demand_weights = {key: 0.0 for key in DEFAULT_WEIGHTS}
+        demand_weights["demand_score"] = 1.0
+        access_weights = {**demand_weights, "demand_score": 0.0, "accessibility_score": 1.0}
+        assert top_cells(apply_weights(pillars, demand_weights), 1).cell_id.item() == 0
+        assert top_cells(apply_weights(pillars, access_weights), 1).cell_id.item() == 1
+
 
 
 class TestTopCells:
@@ -170,4 +175,10 @@ class TestSensitivityTable:
         result = sensitivity_table(grid)
         valid = result["spearman"].dropna()
         assert (valid >= -1.0).all() and (valid <= 1.0).all()
+
+
+
+def test_small_grid_overlap_uses_available_cells():
+    result = sensitivity_table(_make_grid(n=3), delta=0, top_n=50)
+    assert (result.top50_overlap == 1.0).all()
 
